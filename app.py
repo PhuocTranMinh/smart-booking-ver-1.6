@@ -1157,7 +1157,7 @@ def gemini_chat_reply(message: str, identity: dict[str, str], session_id: str) -
         "Giới thiệu phòng/giá bằng get_room_catalog; hỏi tình trạng còn phòng bằng find_available_rooms."
     )
     client = google_genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-    interaction = client.interactions.create(model=GEMINI_MODEL, system_instruction=instructions, tools=AI_TOOLS, input=state["steps"], store=False, generation_config={"max_output_tokens": 600}, timeout=25.0)
+    interaction = client.interactions.create(model=GEMINI_MODEL, system_instruction=instructions, tools=AI_TOOLS, input=state["steps"], store=False, generation_config={"max_output_tokens": 400}, timeout=60.0)
     made_booking = None
     for _ in range(4):
         interaction_steps = interaction.steps or []
@@ -1179,7 +1179,7 @@ def gemini_chat_reply(message: str, identity: dict[str, str], session_id: str) -
                 made_booking = state.pop("created_booking", None)
         state["steps"].extend(tool_results)
         try:
-            interaction = client.interactions.create(model=GEMINI_MODEL, system_instruction=instructions, tools=AI_TOOLS, input=state["steps"], store=False, generation_config={"max_output_tokens": 600}, timeout=25.0)
+            interaction = client.interactions.create(model=GEMINI_MODEL, system_instruction=instructions, tools=AI_TOOLS, input=state["steps"], store=False, generation_config={"max_output_tokens": 400}, timeout=60.0)
         except Exception:
             if made_booking:
                 return {"reply": "Đặt phòng thành công. Mã booking %s, phòng #%s, trạng thái %s." % (made_booking["id"][:8], made_booking["room_id"], made_booking["status"]), "booking": made_booking}
