@@ -84,22 +84,23 @@ Topic dùng tiền tố `rooms/{room_id}`; tên thiết bị là `lamp`, `fan`, 
 
 Backend đăng ký nhận ba loại topic telemetry/status ở trên; lệnh nhóm gửi QoS 1, không retained. Controller cần đăng ký subscribe `rooms/+/command` và phản hồi status sau khi thực thi lệnh. Ví dụ telemetry có thể gửi định kỳ mỗi 5–10 giây hoặc mỗi khi trạng thái thay đổi.
 
-## Bật chatbot AI OpenAI
+## Bật chatbot AI Gemini miễn phí
 
-Chatbot dùng **OpenAI Responses API** và function calling để lấy dữ liệu phòng/giá/thời gian trống từ database. Việc tạo booking chỉ xảy ra sau khi người dùng xác nhận ở một tin nhắn riêng; hủy booking cũng được kiểm tra quyền ở backend. Khi chưa có key hoặc API tạm lỗi, chatbot rule-based cũ vẫn hoạt động.
+Chatbot dùng **Google Gemini API** với model `gemini-3.8-flash` và function calling để lấy dữ liệu phòng/giá/thời gian trống từ database. Việc tạo booking chỉ xảy ra sau khi người dùng xác nhận ở một tin nhắn riêng; hủy booking cũng được kiểm tra quyền ở backend. Khi chưa có key hoặc API tạm lỗi, chatbot rule-based cũ vẫn hoạt động.
 
-1. Tạo API key tại [OpenAI API key dashboard](https://platform.openai.com/api-keys). API có hệ thống thanh toán riêng với ChatGPT và có thể phát sinh phí theo lượng sử dụng.
-2. Trên Render → dịch vụ web → **Environment**, tạo `OPENAI_API_KEY` và dán key vào ô Secret. Không đặt key vào mã nguồn, GitHub, trình duyệt hoặc gửi qua chat. `OPENAI_MODEL` mặc định là `gpt-6-astra`; chỉ thay khi tài khoản API của bạn có quyền dùng model khác.
+1. Vào [Google AI Studio](https://aistudio.google.com/apikey), đăng nhập Google và tạo Gemini API key.
+2. Trên Render → dịch vụ web → **Environment**, tạo `GEMINI_API_KEY` và dán key vào ô Secret. Không đặt key vào mã nguồn, GitHub, trình duyệt hoặc gửi qua chat. `GEMINI_MODEL` mặc định là `gemini-3.8-flash`.
 3. Deploy lại, sau đó mở `/api/health`; cần thấy `"ai_enabled": true`. Nếu chưa có biến key, app tiếp tục chạy chatbot dự phòng.
+
+Google hiện có hạn mức miễn phí cho một số model Gemini, bao gồm model mặc định của demo, nhưng số lượt/tốc độ giới hạn và có thể thay đổi theo model, project, khu vực/tài khoản. Trang giá hiện ghi free tier là $0 cho input/output tokens và cũng ghi dữ liệu free tier có thể được dùng để cải thiện sản phẩm; không nhập mật khẩu, service account hay dữ liệu nhạy cảm. App gửi `store=False` và giữ lịch sử hội thoại trong RAM server, nhưng điều đó không thay đổi chính sách xử lý dữ liệu của free tier.
 
 Local PowerShell (chỉ áp dụng cho cửa sổ hiện tại):
 
 ```powershell
-$env:OPENAI_API_KEY = "dán-key-của-bạn"
+$env:GEMINI_API_KEY = "dán-key-của-bạn"
+.venv\Scripts\python.exe -m pip install -r requirements.txt
 .venv\Scripts\python.exe -m uvicorn app:app --reload
 ```
-
-Nội dung tin nhắn chatbot được gửi tới OpenAI để tạo câu trả lời; hội thoại API được cấu hình `store=False`, còn ngữ cảnh phiên trong app được giữ trong RAM của server. Không đưa mật khẩu, service account hay thông tin nhạy cảm vào hội thoại.
 
 ## Public lên Render
 
@@ -114,7 +115,7 @@ Nếu chưa cấu hình credential Firestore, Render chạy SQLite trên filesys
 Các hạng mục chưa thể hoàn tất chỉ bằng demo web:
 
 1. **Phần cứng:** chưa có firmware ESP32/controller, cảm biến PIR, đầu đọc QR vật lý, watchdog, FSM chạy trực tiếp trên thiết bị, xử lý an toàn khi mất mạng/khởi động lại và xác nhận lệnh phần cứng. Backend nhận/gửi MQTT khi cấu hình broker; chức năng thiết bị hiện chưa chứng minh trên phần cứng thật.
-2. **Chatbot AI:** đã tích hợp OpenAI Responses API và function calling. Muốn bật trên deployment cần tự tạo và đặt `OPENAI_API_KEY` trong Render Secret; chưa kiểm chứng bằng API key thật.
+2. **Chatbot AI:** đã tích hợp Gemini API và function calling. Muốn bật trên deployment cần tạo key tại AI Studio và đặt `GEMINI_API_KEY` trong Render Secret; chưa kiểm chứng bằng key thật. Free tier có quota và điều khoản dữ liệu riêng.
 3. **Kiểm thử nghiệm thu:** chưa chạy bộ 100 câu tiếng Việt, thử đặt đồng thời tải cao, đo thời gian QR dưới 2 giây, thử ngắt mạng/khôi phục với controller thật, hoặc xác minh quyền trên deployment Render/Firestore. Các mục này cần môi trường nghiệm thu và thiết bị/broker thật; không nên coi mô phỏng local là bằng chứng đã đạt.
 4. **Tài khoản:** user/admin hiện là tài khoản demo hardcode trong app, phiên đăng nhập nằm trong RAM; collection `users` là metadata, chưa phải hệ thống đăng ký/mật khẩu Firebase Auth. Không dùng tài khoản demo cho dữ liệu người dùng thật.
 

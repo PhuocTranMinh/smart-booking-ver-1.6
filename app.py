@@ -34,9 +34,9 @@ except ImportError:
     service_account = None
 
 try:
-    from openai import OpenAI
+    from google import genai as google_genai
 except ImportError:
-    OpenAI = None
+    google_genai = None
 
 BASE = Path(__file__).parent
 DB_PATH = Path(os.getenv("ROOM_DB", str(BASE / "rooms.db")))
@@ -719,7 +719,7 @@ def home():
 
 @app.get("/api/health")
 def health():
-    ai_status = {"ai_provider": "openai", "ai_enabled": bool(os.getenv("OPENAI_API_KEY", "").strip() and OpenAI is not None), "ai_model": OPENAI_MODEL}
+    ai_status = {"ai_provider": "gemini", "ai_enabled": bool(os.getenv("GEMINI_API_KEY", "").strip() and google_genai is not None), "ai_model": GEMINI_MODEL}
     if FIRESTORE is None:
         return {"status": "ok", "database": "sqlite", "firestore_connected": False, **ai_status}
     try:
@@ -1042,20 +1042,20 @@ def command_devices(room_id: int, data: DeviceCommandIn, identity: dict[str, str
     return {"ok": True, "room_id": room_id, "devices": data.devices, **transport}
 
 
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-6-astra")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 AI_TOOLS = [
     {"type": "function", "name": "get_room_catalog", "description": "Lấy loại phòng, sức chứa, tiện nghi, giá và trạng thái thiết bị từ database hiện tại.",
-     "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}, "strict": True},
+     "parameters": {"type": "object", "properties": {}, "required": []}},
     {"type": "function", "name": "find_available_rooms", "description": "Tìm phòng trống thật theo thời gian, số người và tiện nghi; chỉ dùng khi người dùng hỏi tình trạng còn phòng.",
-     "parameters": {"type": "object", "properties": {"start": {"type": "string", "description": "ISO 8601 có múi giờ"}, "end": {"type": "string", "description": "ISO 8601 có múi giờ"}, "people": {"type": "integer"}, "amenities": {"type": "array", "items": {"type": "string"}}}, "required": ["start", "end", "people", "amenities"], "additionalProperties": False}, "strict": True},
+     "parameters": {"type": "object", "properties": {"start": {"type": "string", "description": "ISO 8601 có múi giờ"}, "end": {"type": "string", "description": "ISO 8601 có múi giờ"}, "people": {"type": "integer"}, "amenities": {"type": "array", "items": {"type": "string"}}}, "required": ["start", "end", "people", "amenities"]}},
     {"type": "function", "name": "prepare_booking", "description": "Kiểm tra lại phòng còn trống và chuẩn bị đề xuất đặt phòng. Không tạo booking; phải chờ người dùng xác nhận ở lượt riêng.",
-     "parameters": {"type": "object", "properties": {"start": {"type": "string", "description": "ISO 8601 có múi giờ"}, "end": {"type": "string", "description": "ISO 8601 có múi giờ"}, "people": {"type": "integer"}, "room_id": {"type": ["integer", "null"]}, "amenities": {"type": "array", "items": {"type": "string"}}}, "required": ["start", "end", "people", "room_id", "amenities"], "additionalProperties": False}, "strict": True},
+     "parameters": {"type": "object", "properties": {"start": {"type": "string", "description": "ISO 8601 có múi giờ"}, "end": {"type": "string", "description": "ISO 8601 có múi giờ"}, "people": {"type": "integer"}, "room_id": {"type": "integer"}, "amenities": {"type": "array", "items": {"type": "string"}}}, "required": ["start", "end", "people", "amenities"]}},
     {"type": "function", "name": "confirm_booking", "description": "Tạo booking chỉ sau khi người dùng xác nhận đề xuất ở lượt hiện tại.",
-     "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}, "strict": True},
+     "parameters": {"type": "object", "properties": {}, "required": []}},
     {"type": "function", "name": "get_my_bookings", "description": "Xem booking của tài khoản đang đăng nhập.",
-     "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}, "strict": True},
+     "parameters": {"type": "object", "properties": {}, "required": []}},
     {"type": "function", "name": "cancel_my_booking", "description": "Hủy booking của tài khoản đang đăng nhập, chỉ khi người dùng yêu cầu hủy rõ ràng ở lượt hiện tại.",
-     "parameters": {"type": "object", "properties": {"booking_id": {"type": "string"}}, "required": ["booking_id"], "additionalProperties": False}, "strict": True},
+     "parameters": {"type": "object", "properties": {"booking_id": {"type": "string"}}, "required": ["booking_id"]}},
 ]
 
 
@@ -1138,16 +1138,16 @@ def _ai_tool(name: str, args: dict[str, Any], identity: dict[str, str], state: d
     return {"ok": False, "message": "Function không được hỗ trợ."}
 
 
-def openai_chat_reply(message: str, identity: dict[str, str], session_id: str) -> Optional[dict[str, Any]]:
-    if OpenAI is None:
+def gemini_chat_reply(message: str, identity: dict[str, str], session_id: str) -> Optional[dict[str, Any]]:
+    if google_genai is None:
         return None
     cache_key = identity["user_id"] + ":" + hashlib.sha256(session_id.encode()).hexdigest()
-    state = AI_CHAT.setdefault(cache_key, {"input": [], "pending_booking": None, "session_key": cache_key})
+    state = AI_CHAT.setdefault(cache_key, {"steps": [], "pending_booking": None, "session_key": cache_key})
     if state.get("pending_booking") and not _is_explicit_booking_confirmation(message):
         state.pop("pending_booking", None)
-    if len(state["input"]) > 32:
-        state["input"] = []
-    state["input"].append({"role": "user", "content": message[:2000]})
+    if len(state["steps"]) > 32:
+        state["steps"] = []
+    state["steps"].append({"type": "user_input", "content": [{"type": "text", "text": message[:2000]}]})
     instructions = (
         "Bạn là trợ lý đặt phòng học Smart Study Room, trả lời tiếng Việt thân thiện, ngắn gọn. "
         "Luôn dùng công cụ để lấy giá/phòng/trạng thái thực; không tự đoán dữ liệu. Đọc các lượt trước để hỏi tiếp các thông tin còn thiếu. "
@@ -1156,51 +1156,51 @@ def openai_chat_reply(message: str, identity: dict[str, str], session_id: str) -
         "Chỉ gọi confirm_booking khi user hiện tại trả lời rõ ràng xác nhận. Hủy chỉ theo yêu cầu rõ ràng. Không hiển thị booking của người khác. "
         "Giới thiệu phòng/giá bằng get_room_catalog; hỏi tình trạng còn phòng bằng find_available_rooms."
     )
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=25.0, max_retries=1)
-    response = client.responses.create(model=OPENAI_MODEL, instructions=instructions, tools=AI_TOOLS, input=state["input"], store=False, max_output_tokens=600)
+    client = google_genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    interaction = client.interactions.create(model=GEMINI_MODEL, system_instruction=instructions, tools=AI_TOOLS, input=state["steps"], store=False, generation_config={"max_output_tokens": 600}, timeout=25.0)
     made_booking = None
     for _ in range(4):
-        outputs = [item.model_dump(mode="json") for item in response.output]
-        state["input"].extend(outputs)
-        calls = [item for item in response.output if item.type == "function_call"]
+        interaction_steps = interaction.steps or []
+        state["steps"].extend([item.model_dump(mode="json", exclude_none=True) for item in interaction_steps])
+        calls = [item for item in interaction_steps if item.type == "function_call"]
         if not calls:
             break
         tool_results = []
         for call in calls:
             try:
-                args = json.loads(call.arguments or "{}")
+                args = call.arguments if isinstance(call.arguments, dict) else json.loads(call.arguments or "{}")
                 result = _ai_tool(call.name, args, identity, state, message)
             except HTTPException as exc:
                 result = {"ok": False, "message": str(exc.detail)}
             except Exception as exc:
                 result = {"ok": False, "message": "Không xử lý được yêu cầu (%s)." % type(exc).__name__}
-            tool_results.append({"type": "function_call_output", "call_id": call.call_id, "output": json.dumps(result, ensure_ascii=False, default=str)})
+            tool_results.append({"type": "function_result", "name": call.name, "call_id": call.id, "result": [{"type": "text", "text": json.dumps(result, ensure_ascii=False, default=str)}]})
             if call.name == "confirm_booking" and result.get("ok"):
                 made_booking = state.pop("created_booking", None)
-        state["input"].extend(tool_results)
+        state["steps"].extend(tool_results)
         try:
-            response = client.responses.create(model=OPENAI_MODEL, instructions=instructions, tools=AI_TOOLS, input=state["input"], store=False, max_output_tokens=600)
+            interaction = client.interactions.create(model=GEMINI_MODEL, system_instruction=instructions, tools=AI_TOOLS, input=state["steps"], store=False, generation_config={"max_output_tokens": 600}, timeout=25.0)
         except Exception:
             if made_booking:
                 return {"reply": "Đặt phòng thành công. Mã booking %s, phòng #%s, trạng thái %s." % (made_booking["id"][:8], made_booking["room_id"], made_booking["status"]), "booking": made_booking}
             raise
     if made_booking:
         return {"reply": "Đặt phòng thành công. Mã booking %s, phòng #%s, trạng thái %s." % (made_booking["id"][:8], made_booking["room_id"], made_booking["status"]), "booking": made_booking}
-    answer = (response.output_text or "Mình chưa hiểu rõ yêu cầu. Bạn có thể nói ngày, giờ, thời lượng và số người cần phòng nhé.").strip()
+    answer = (interaction.output_text or "Mình chưa hiểu rõ yêu cầu. Bạn có thể nói ngày, giờ, thời lượng và số người cần phòng nhé.").strip()
     return {"reply": answer}
 
 
 @app.post("/api/chat")
 def chat(data: ChatIn, identity: dict[str, str] = Depends(current_user)):
     message = data.message.strip()
-    if os.getenv("OPENAI_API_KEY", "").strip():
+    if os.getenv("GEMINI_API_KEY", "").strip():
         try:
-            ai_reply = openai_chat_reply(message, identity, data.session_id)
+            ai_reply = gemini_chat_reply(message, identity, data.session_id)
             if ai_reply is not None:
                 return ai_reply
         except Exception as exc:
             # Keep the demo usable when the external AI service is temporarily unavailable.
-            print("OpenAI chat unavailable (%s): %s" % (type(exc).__name__, str(exc)), flush=True)
+            print("Gemini chat unavailable (%s): %s" % (type(exc).__name__, str(exc)), flush=True)
     state = CHAT.setdefault(identity["user_id"] + ":" + data.session_id, {})
     normalized = message.casefold()
 
