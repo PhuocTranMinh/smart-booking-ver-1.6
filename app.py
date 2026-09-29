@@ -1193,16 +1193,21 @@ def gemini_chat_reply(message: str, identity: dict[str, str], session_id: str) -
 @app.post("/api/chat")
 def chat(data: ChatIn, identity: dict[str, str] = Depends(current_user)):
     message = data.message.strip()
-    if os.getenv("GEMINI_API_KEY", "").strip():
-        try:
-            ai_reply = gemini_chat_reply(message, identity, data.session_id)
-            if ai_reply is not None:
-                return ai_reply
-        except Exception as exc:
-            # Keep the demo usable when the external AI service is temporarily unavailable.
-            print("Gemini chat unavailable (%s): %s" % (type(exc).__name__, str(exc)), flush=True)
     state = CHAT.setdefault(identity["user_id"] + ":" + data.session_id, {})
     normalized = message.casefold()
+    ai_key = identity["user_id"] + ":" + hashlib.sha256(data.session_id.encode()).hexdigest()
+    ai_state = AI_CHAT.get(ai_key)
+    if ai_state and ai_state.get("pending_booking") and not _is_explicit_booking_confirmation(message):
+        ai_state.pop("pending_booking", None)
+
+    # Short greetings and acknowledgements are fixed UI copy: answer locally, without an AI call.
+    if re.fullmatch(r"\s*(xin chào|chào(?: bạn| ad)?|hello|hi|hey)[!.\s]*", normalized):
+        return {"reply": "Chào bạn! 👋 Mình có thể giới thiệu phòng, báo giá hoặc giúp bạn tìm phòng phù hợp. Bạn muốn xem dịch vụ, loại phòng, bảng giá hay bắt đầu đặt phòng?"}
+    if re.fullmatch(r"\s*(cảm ơn|cam on|cảm ơn nhé|thanks|thank you)[!.\s]*", normalized):
+        return {"reply": "Rất vui được hỗ trợ bạn! Nếu cần, mình có thể xem loại phòng, giá hoặc tìm phòng còn trống."}
+    if re.fullmatch(r"\s*(tìm phòng phù hợp|tìm phòng|bắt đầu đặt phòng)[!.\s]*", normalized):
+        state["local_booking_flow"] = True
+        return {"reply": "Mình sẽ tìm phòng phù hợp cho bạn. Trước tiên, bạn cần phòng cho bao nhiêu người? Sau đó cho mình ngày, giờ bắt đầu và thời lượng." , "needs": ["people", "date", "time", "duration"]}
 
     # Carry room type and amenity preferences across turns just like the other booking slots.
     available_rooms = fs_rooms() if FIRESTORE is not None else None
@@ -1298,6 +1303,26 @@ def chat(data: ChatIn, identity: dict[str, str] = Depends(current_user)):
             rows = c.execute("SELECT name,capacity,amenities,hourly_rate FROM rooms ORDER BY capacity").fetchall()
         descriptions = [f"• {r['name']}: tối đa {r['capacity']} người; tiện nghi {', '.join(json.loads(r['amenities']))}; {r['hourly_rate']:,}₫/giờ" for r in rows]
         return {"reply": "Hiện có các phòng sau (thông tin lấy từ hệ thống):\n" + "\n".join(descriptions) + "\nBạn muốn đặt phòng nào? Hãy cho mình biết số người, ngày, giờ bắt đầu và thời lượng."}
+
+    # Rule based answers above stay local. Call Gemini only for free-form requests or
+    # an AI conversation already in progress; structured booking slots use our parser.
+    has_booking_slot = bool(
+        re.search(r"\b\d{1,2}\s*(?:người|nguoi|pax)\b", normalized)
+        or re.search(r"\b(?:hôm nay|hom nay|ngày mai|ngay mai|mai|ngày kia|ngay kia|mốt|mot|20\d{2}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[/-]\d{1,2}(?:[/-]20\d{2})?|thứ\s*[2-7]|chủ nhật)\b", normalized)
+        or re.search(r"\b\d{1,2}\s*(?:h|:)\s*\d{0,2}\b", normalized)
+        or re.search(r"\d+(?:[.,]\d+)?\s*(?:tiếng|giờ|hours|phút|phut|min|minutes)", normalized)
+    )
+    if os.getenv("GEMINI_API_KEY", "").strip() and not state.get("local_booking_flow") and (bool(ai_state and ai_state.get("steps")) or _is_explicit_booking_confirmation(message) or not has_booking_slot):
+        try:
+            ai_reply = gemini_chat_reply(message, identity, data.session_id)
+            if ai_reply is not None:
+                return ai_reply
+        except Exception as exc:
+            # Keep local responses available when the external AI service is unavailable.
+            print("Gemini chat unavailable (%s): %s" % (type(exc).__name__, str(exc)), flush=True)
+
+    if has_booking_slot:
+        state["local_booking_flow"] = True
 
     people_match = re.search(r"\b(\d{1,2})\s*(?:người|nguoi|pax)\b", normalized)
     if people_match:
